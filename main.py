@@ -9,14 +9,11 @@ from machine import Pin
 # (date(2000, 1, 1) - date(1900, 1, 1)).days * 24*60*60
 NTP_DELTA = 3155673600
 host = "pool.ntp.org"
-global rtc_wake
-rtc_wake = False
 
 global pins;
-pins = {
-  0: Pin('GP0', mode=Pin.OUT),
-  1: Pin('GP1', mode=Pin.OUT)
-}
+pins = {}
+for i in range(16):
+    pins[i] = Pin('GP' + str(i), mode=Pin.OUT)
 
 def gettime():
     NTP_QUERY = bytearray(48)
