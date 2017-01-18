@@ -9,11 +9,27 @@ from machine import Pin
 # (date(2000, 1, 1) - date(1900, 1, 1)).days * 24*60*60
 NTP_DELTA = 3155673600
 host = "pool.ntp.org"
+lightcnt = 8
+seconds_per_day = 86400
+periods_per_day = 2 ** lightcnt
+seconds_per_period = seconds_per_day // periods_per_day
 
-global pins;
+global display_state
+display_state = 0
+
+global max_display_state
+max_display_state = periods_per_day - 1
+
+global display_formatter
+display_formatter = '{0:0' + str(lightcnt) + 'b}'
+
+global pins
 pins = {}
 for i in range(16):
     pins[i] = Pin('GP' + str(i), mode=Pin.OUT)
+
+global wakeup
+wakeup = False
 
 def gettime():
     NTP_QUERY = bytearray(48)
@@ -27,12 +43,30 @@ def gettime():
     val = struct.unpack("!I", msg[40:44])[0]
     return val - NTP_DELTA
 
+def tick():
+    global display_state
+
+    if display_state == max_display_state:
+        display_state -= max_display_state
+    else:
+        display_state += 1
+
+    for idx, val in enumerate(list(display_formatter.format(display_state))):
+        pins[idx].value(int(val))
+
 def alarm_handler (rtc_o):
-    pins[0].toggle()
-    pins[1].toggle()
+    global wakeup
+    wakeup = True
 
 t = gettime()
 tm = utime.localtime(t)
 rtc = RTC(datetime=tm)
 rtc.alarm(time=1000, repeat=True)
 rtc_i = rtc.irq(trigger=RTC.ALARM0, handler=alarm_handler, wake=machine.SLEEP | machine.IDLE)
+
+while True:
+    machine.idle()
+
+    if wakeup == True:
+        tick()
+        wakeup = False
