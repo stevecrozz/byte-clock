@@ -1,0 +1,9 @@
+#! /bin/bash
+
+ftp -n wipy <<EOS
+user micro "python"
+passive
+cd flash
+put main.py
+bye
+EOS
