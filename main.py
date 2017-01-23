@@ -43,6 +43,10 @@ class TwentyFourHourClock:
         tm = utime.localtime(time)
         return RTC(datetime=tm)
 
+    def seconds_since_midnight(self):
+        now = self.rtc.now()
+        return now[3] * 24 * 60 + now[4] * 60 + now[5]
+
 class HalfDay:
     LIGHT_COUNT = 8
     MICROSECONDS_PER_DAY = 24 * 60 * 60 * 1000
@@ -58,9 +62,25 @@ class HalfDay:
     def set_clock(self, clock):
         self.tfhc = clock
 
+    def set_display_state(self):
+        seconds_since_midnight = self.tfhc.seconds_since_midnight()
+        self.display_state = seconds_since_midnight // self.PERIODS_PER_DAY
+        self.display_state = self.display_state - 1
+        self.tick()
+
     def test(self):
         self.tfhc.rtc.alarm(
             time=1000,
+            repeat=True)
+
+        self.tick_interrupt = self.tfhc.rtc.irq(
+            trigger=RTC.ALARM0,
+            handler=alarm_handler,
+            wake=machine.SLEEP | machine.IDLE)
+
+    def run(self):
+        self.tfhc.rtc.alarm(
+            time=self.MICROSECONDS_PER_PERIOD,
             repeat=True)
 
         self.tick_interrupt = self.tfhc.rtc.irq(
@@ -77,15 +97,15 @@ class HalfDay:
         for idx, val in enumerate(list(self.DISPLAY_FORMATTER.format(self.display_state))):
             pins[idx].value(int(val))
 
-clock = TwentyFourHourClock('pool.ntp.org')
 
-half_day = HalfDay()
-half_day.set_clock(clock)
-half_day.test()
+h = HalfDay()
+h.set_clock(TwentyFourHourClock('pool.ntp.org'))
+h.set_display_state()
+h.run()
 
 while True:
     machine.idle()
 
     if wakeup == True:
-        half_day.tick()
+        h.tick()
         wakeup = False
