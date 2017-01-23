@@ -1,9 +1,23 @@
-#! /bin/bash
+#! /usr/bin/env python
 
-ftp -n wipy <<EOS
-user micro "python"
-passive
-cd flash
-put main.py
-bye
-EOS
+# import time
+
+print "Pushing a new main.py to the wipy via FTP"
+from ftplib import FTP
+ftp = FTP('wipy')
+ftp.login('micro', 'python')
+ftp.cwd('flash')
+ftp.storbinary('STOR main.py', open('main.py', 'rb'))
+ftp.quit()
+
+print "Restarting the wipy via telnet"
+import telnetlib
+tn = telnetlib.Telnet('wipy')
+tn.read_until("Login as: ")
+tn.write("micro\r\n")
+tn.read_until("Password: ")
+tn.write("python\r\n")
+tn.read_until('Type "help()" for more information.')
+tn.write('\x03')
+tn.read_until(">>> ")
+tn.write("machine.reset()\r\n")
