@@ -7,23 +7,19 @@ import sys
 from machine import RTC
 from machine import Pin
 
-global pins
-pins = {}
-for i in range(16):
-    pins[i] = Pin('GP' + str(i), mode=Pin.OUT)
-
-global wakeup
-wakeup = False
-
-def alarm_handler (rtc_o):
-    global wakeup
-    wakeup = True
-
 class TwentyFourHourClock:
     # (date(2000, 1, 1) - date(1900, 1, 1)).days * 24*60*60
     NTP_DELTA = 3155673600
 
-    def __init__(self, host):
+    def sync_with_retries(self, host, tries):
+        for i in range(0, tries):
+            try:
+                self.sync(host)
+            except TimeoutError:
+                continue
+            break
+
+    def sync(self, host):
         time = self.fetch_ntp_time(host)
         self.rtc = self.set_ntp_time(time)
 
@@ -47,26 +43,30 @@ class TwentyFourHourClock:
         now = self.rtc.now()
         return now[3] * 24 * 60 + now[4] * 60 + now[5]
 
-class HalfDay:
+class Counter:
     LIGHT_COUNT = 8
     MICROSECONDS_PER_DAY = 24 * 60 * 60 * 1000
     PERIODS_PER_DAY = 2 ** LIGHT_COUNT
     MICROSECONDS_PER_PERIOD = MICROSECONDS_PER_DAY // PERIODS_PER_DAY
     MAX_DISPLAY_STATE = PERIODS_PER_DAY - 1
-    DISPLAY_FORMATTER = '{0:0' + str(LIGHT_COUNT) + 'b}'
 
-    def __init__(self):
-        self.display_state = 0
-        pass
+    def __init__(self, clock, display):
+        self.tfhc = clock
+        self.display = display
+        self.tick_ready = False
+        self.test()
+        self.set_state()
+
+    def handle_interrupt(self, rtc_o):
+        self.tick_ready = True
 
     def set_clock(self, clock):
         self.tfhc = clock
 
-    def set_display_state(self):
+    def set_state(self):
         seconds_since_midnight = self.tfhc.seconds_since_midnight()
-        self.display_state = seconds_since_midnight // self.PERIODS_PER_DAY
-        self.display_state = self.display_state - 1
-        self.tick()
+        self.state = seconds_since_midnight // self.PERIODS_PER_DAY
+        self.display.display(self.state)
 
     def test(self):
         self.tfhc.rtc.alarm(
@@ -75,37 +75,52 @@ class HalfDay:
 
         self.tick_interrupt = self.tfhc.rtc.irq(
             trigger=RTC.ALARM0,
-            handler=alarm_handler,
+            handler=self.handle_interrupt,
             wake=machine.SLEEP | machine.IDLE)
 
-    def run(self):
+    def set_interrupt(self):
         self.tfhc.rtc.alarm(
             time=self.MICROSECONDS_PER_PERIOD,
             repeat=True)
 
         self.tick_interrupt = self.tfhc.rtc.irq(
             trigger=RTC.ALARM0,
-            handler=alarm_handler,
+            handler=self.handle_interrupt,
             wake=machine.SLEEP | machine.IDLE)
 
+    def run(self):
+        while True:
+            machine.idle()
+
+            if self.tick_ready:
+                self.tick_ready = False
+                self.tick()
+
     def tick(self):
-        if self.display_state == self.MAX_DISPLAY_STATE:
-            self.display_state -= self.MAX_DISPLAY_STATE
+        if self.state == self.MAX_DISPLAY_STATE:
+            self.state -= self.MAX_DISPLAY_STATE
         else:
-            self.display_state += 1
+            self.state += 1
 
-        for idx, val in enumerate(list(self.DISPLAY_FORMATTER.format(self.display_state))):
-            pins[idx].value(int(val))
+        self.display.display(self.state)
 
+class Display:
+    PINS = {}
 
-h = HalfDay()
-h.set_clock(TwentyFourHourClock('pool.ntp.org'))
-h.set_display_state()
-h.run()
+    def __init__(self, pin_count):
+        self.DISPLAY_FORMATTER = '{0:0' + str(pin_count) + 'b}'
 
-while True:
-    machine.idle()
+        for i in range(pin_count):
+            self.PINS[i] = Pin('GP' + str(i), mode=Pin.OUT)
 
-    if wakeup == True:
-        h.tick()
-        wakeup = False
+    def display(self, state):
+        for i, v in enumerate(list(self.DISPLAY_FORMATTER.format(state))):
+            self.PINS[i].value(int(v))
+
+clock = TwentyFourHourClock()
+clock.sync_with_retries('pool.ntp.org', 3)
+
+display = Display(8)
+
+counter = Counter(clock, display)
+counter.run()
